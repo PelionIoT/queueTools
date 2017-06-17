@@ -127,7 +127,7 @@ func (fifo *FIFO) Pop() (n *NODE) {
 func (fifo *FIFO) PopBatch(max uint32) (slice []*NODE) {
 	fmt.Printf("***DEBUG_GO:"+" >>>>>>>>>>>> In PopOrWaitBatch (Lock)\n")
 	fifo.mutex.Lock()
-	_wakeupIter := fifo.wakeupIter
+//	_wakeupIter := fifo.wakeupIter
 	if(fifo.shutdown) {
 		fifo.mutex.Unlock()
 		fmt.Printf("***DEBUG_GO:"+" <<<<<<<<<<<<< In PopOrWaitBatch (Unlock 1)\n")
@@ -140,7 +140,7 @@ func (fifo *FIFO) PopBatch(max uint32) (slice []*NODE) {
 	    	fifo.q = nil  // http://stackoverflow.com/questions/29164375/golang-correct-way-to-initialize-empty-slice
 		} else {
 			slice = (fifo.q)[0:max]
-			fifo.q = (fifo.q)[max:]		
+			fifo.q = (fifo.q)[max:]
 		}
 		fifo.mutex.Unlock()
 		fifo.condFull.Signal()
@@ -148,42 +148,36 @@ func (fifo *FIFO) PopBatch(max uint32) (slice []*NODE) {
 		return
 	}
 	// nothing there, let's wait
-	for !fifo.shutdown && fifo.wakeupIter == _wakeupIter {
-//		fmt.Printf(" --entering wait %+v\n",*fifo);
-	fmt.Printf("***DEBUG_GO:"+" ----------- In PopOrWaitBatch (Wait / Unlock 1)\n")
-		fifo.condWait.Wait() // will unlock it's "Locker" - which is fifo.mutex
-//		Wait returns with Lock
-//		fmt.Printf(" --out of wait %+v\n",*fifo);
-		if fifo.shutdown { 
-			fifo.mutex.Unlock()
-	fmt.Printf("***DEBUG_GO:"+" <<<<<<<<<<<<< In PopOrWaitBatch (Unlock 4)\n")
-			return 
-		}
-		_len = uint32(len(fifo.q))
-		if _len > 0 {
-			if max >= _len {
-		    	slice = fifo.q
-		    	fifo.q = nil  // http://stackoverflow.com/questions/29164375/golang-correct-way-to-initialize-empty-slice
-			} else {
-				slice = (fifo.q)[0:max]
-				fifo.q = (fifo.q)[max:]			
-			}
-			fifo.mutex.Unlock()
-			fifo.condFull.Signal()
-		fmt.Printf("***DEBUG_GO:"+" <<<<<<<<<<<<< In PopOrWaitBatch (Unlock 3)\n")
-			return
-		}
-	}
-	fmt.Printf("***DEBUG_GO:"+" <<<<<<<<<<<<< In PopOrWaitBatch (Unlock 5)\n")
+// 	for !fifo.shutdown && fifo.wakeupIter == _wakeupIter {
+// //		fmt.Printf(" --entering wait %+v\n",*fifo);
+// 	fmt.Printf("***DEBUG_GO:"+" ----------- In PopOrWaitBatch (Wait / Unlock 1)\n")
+// 		fifo.condWait.Wait() // will unlock it's "Locker" - which is fifo.mutex
+// //		Wait returns with Lock
+// //		fmt.Printf(" --out of wait %+v\n",*fifo);
+// 		if fifo.shutdown { 
+// 			fifo.mutex.Unlock()
+// 	fmt.Printf("***DEBUG_GO:"+" <<<<<<<<<<<<< In PopOrWaitBatch (Unlock 4)\n")
+// 			return 
+// 		}
+// 		_len = uint32(len(fifo.q))
+// 		if _len > 0 {
+// 			if max >= _len {
+// 		    	slice = fifo.q
+// 		    	fifo.q = nil  // http://stackoverflow.com/questions/29164375/golang-correct-way-to-initialize-empty-slice
+// 			} else {
+// 				slice = (fifo.q)[0:max]
+// 				fifo.q = (fifo.q)[max:]			
+// 			}
+// 			fifo.mutex.Unlock()
+// 			fifo.condFull.Signal()
+// 		fmt.Printf("***DEBUG_GO:"+" <<<<<<<<<<<<< In PopOrWaitBatch (Unlock 3)\n")
+// 			return
+// 		}
+// 	}
+// 	fmt.Printf("***DEBUG_GO:"+" <<<<<<<<<<<<< In PopOrWaitBatch (Unlock 5)\n")
 	fifo.mutex.Unlock()
 	return
 }
-
-
-
-
-
-
 
 func (fifo *FIFO) Len() int {
 	fifo.mutex.Lock()
@@ -228,7 +222,7 @@ func (fifo *FIFO) PopOrWait() (n *NODE) {
 			fifo.condFull.Signal()
 		fmt.Printf("***DEBUG_GO:"+" <<<<<<<<<<<<< In PopOrWait (Unlock 3)\n")
 			return
-		}
+			}
 	}
 	fmt.Printf("***DEBUG_GO:"+" <<<<<<<<<<<<< In PopOrWait (Unlock 5)\n")
 	fifo.mutex.Unlock()
@@ -485,6 +479,95 @@ func TestFifoBatch(t *testing.T) {
 		fmt.Printf("exits: %d\n",exits)
 		t.Errorf("Not all threads exited\n")
 	} 
+}
+
+
+func TestFifoBatchNoWait(t *testing.T) {
+	buffer := New_testStructFifo(11)
+	exits := 0
+	// addsome := func(z int, name string){
+	// 	for n :=0;n < z;n++ {
+	// 		dropped, _ := buffer.Push(new(logBuffer))
+	// 		if(dropped) {
+	// 			fmt.Printf("[%s] Added and Dropped a buffer!: %d\n",name,n)
+	// 		} else {
+	// 			fmt.Printf("[%s] added a buffer: %d\n",name,n)
+	// 		}
+	// 	}		
+	// }
+
+	addsome := func(z int, name string){
+		for n :=0;n < z;n++ {
+			val := new(testStruct)
+			val.val = name+strconv.FormatUint(uint64(n),10)
+			ok := buffer.PushOrWait(val)
+			if(ok) {
+				fmt.Printf("[%s] Added a buffer!: %d\n",name,n)
+			} else {
+				if buffer.IsShutdown() {
+					fmt.Printf("[%s] (add buffer) must be shutdown: %d\n",name,n)
+					break					
+				}
+			}
+		}		
+	}
+
+	removed := 0
+
+	removesomeNoWait := func(z int, b uint32, name string){
+		for n :=0;n < z;n++ {
+//		for true {
+			fmt.Printf("[%s] PopBatch(%d)...\n",name,b)
+			slice := buffer.PopBatch(b)
+			fmt.Printf("[%s] PopBatch(%d) returned %d\n",name,b,len(slice))
+			if slice == nil {
+				if(buffer.IsShutdown()) {
+					fmt.Printf("[%s] Got shutdown\n",name)
+					break
+				} else {
+					fmt.Printf("[%s] Got nothing.\n",name)
+					break
+				}
+			}
+			for _,outbuf := range slice {
+				if(outbuf != nil) {
+					fmt.Printf("[%s] Got a buffer (%s)\n",name,outbuf.val)
+					removed++
+				} else {
+					fmt.Printf("[%s] Got nil - must be shutdown\n",name)
+					break
+				}				
+			}
+		}
+		fmt.Printf("[%s] removesomeNoWait Done :)\n",name)
+		exits++;
+	}
+
+	shutdown_in := func(s int) {
+		time.Sleep(time.Duration(s)*time.Second)
+		fmt.Printf("Shutting down FIFO\n")
+		if buffer.Len() > 0 {
+			t.Errorf("Buffer is not empty\n")
+		}
+		buffer.Shutdown()
+		fmt.Printf("Shutdown FIFO complete\n")
+	}
+
+	addsome(10,"one")
+	go removesomeNoWait(4,3,"one")
+
+	shutdown_in(2)
+	time.Sleep(time.Duration(1)*time.Second)
+	if removed != 10 {
+		fmt.Printf("removed: %d\n",removed)
+		t.Errorf("Did not batch deque everything\n")		
+	}
+	if exits != 1 {
+		fmt.Printf("exits: %d\n",exits)
+		t.Errorf("Not all threads exited\n")
+	} 
+
+
 }
 
 
